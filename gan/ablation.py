@@ -77,7 +77,7 @@ def _make_input(batch: dict, cloudy_ch: int, sar_ch: int, device: torch.device):
 
 def _build_model(cloudy_ch: int, sar_ch: int, device: torch.device) -> CloudRemovalGenerator:
     in_ch = cloudy_ch + sar_ch
-    model = CloudRemovalGenerator(in_channels=in_ch, out_channels=4, base_filters=32, dropout=0.3)
+    model = CloudRemovalGenerator(in_channels=in_ch, out_channels=4, base_filters=64, dropout=0.3)
     return model.to(device)
 
 
@@ -181,20 +181,21 @@ def train_variant(
 
 
 # ---------------------------------------------------------------------------
-# Evaluate one variant  (loads from checkpoint if given)
+# Evaluate one variant (Zero-Shot using Full Model)
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
 def evaluate_variant(
     name: str, cloudy_ch: int, sar_ch: int,
-    model_or_path,         # CloudRemovalGenerator or Path/str to ckpt
+    model_or_path,         # CloudRemovalGenerator or Path/str to full ckpt
     val_loader,
     device: torch.device,
 ) -> dict:
     """Return dict with psnr, ssim, mae averaged over validation set."""
-
+    
+    # We ALWAYS load the FULL model (in_channels=6) for zero-shot ablation
     if isinstance(model_or_path, (str, Path)):
-        model = _build_model(cloudy_ch, sar_ch, device)
+        model = _build_model(4, 2, device)  # Always build full model
         ckpt  = torch.load(model_or_path, map_location=device)
         model.load_state_dict(ckpt.get("gen", ckpt))
     else:
@@ -205,11 +206,20 @@ def evaluate_variant(
     n = 0
 
     for batch in val_loader:
-        x     = _make_input(batch, cloudy_ch, sar_ch, device)
+        # Build 6-channel input
+        cloudy = batch["cloudy"].to(device)
+        sar    = batch["sar"].to(device)
+        
+        # Zero out missing modalities for ablation
+        if name == "no_cloudy":
+            cloudy = torch.zeros_like(cloudy)
+        elif name == "no_sar":
+            sar = torch.zeros_like(sar)
+            
         clean = batch["clean"].to(device)
         B     = clean.shape[0]
 
-        pred = _ablation_forward(model, x)
+        pred = model(cloudy, sar)
 
         total["psnr"] += psnr(pred,  clean) * B
         total["ssim"] += ssim_approx(pred, clean) * B
@@ -220,29 +230,9 @@ def evaluate_variant(
 
 
 def _ablation_forward(model: CloudRemovalGenerator, x: torch.Tensor) -> torch.Tensor:
-    """
-    Run a forward pass through the generator with a potentially different
-    input channel count (ablation variants have reduced inputs).
-    Reuses the U-Net forward() which just does torch.cat then encode/decode.
-    We pass x as 'cloudy' and a zero tensor as 'sar' — the model only sees x.
-    """
-    # The generator concatenates cloudy+sar internally; for ablation we pre-concat
-    # and pass through a model whose enc1 was built for the right number of channels.
-    # We split x back conceptually: first few ch = cloudy-like, rest = sar-like.
-    # Since the ablation model was built with in_channels=cloudy_ch+sar_ch,
-    # we just call the raw nn forward (bypassing the cat inside generator.forward).
-    #
-    # Trick: call the internal encode/decode pipeline directly.
-    e1 = model.enc1(x)
-    e2 = model.enc2(e1)
-    e3 = model.enc3(e2)
-    e4 = model.enc4(e3)
-    b  = model.bottleneck(e4)
-    d4 = model.dec4(b,  e4)
-    d3 = model.dec3(d4, e3)
-    d2 = model.dec2(d3, e2)
-    d1 = model.dec1(d2, e1)
-    return model.head(d1)
+    # Deprecated: model.forward_ablation(x) is used instead
+    return model.forward_ablation(x)
+
 
 
 # ---------------------------------------------------------------------------
@@ -441,19 +431,11 @@ def main():
             model_or_path = ckpt_path
 
         else:
-            # eval mode: use the provided checkpoint for "full", random weights for ablated
-            if name == "full":
-                ckpt = args.full_ckpt
-                if not os.path.isfile(ckpt):
-                    print(f"  WARNING: full checkpoint '{ckpt}' not found.")
-                    print("  Using random weights — run training first for meaningful numbers.")
-                model_or_path = ckpt if os.path.isfile(ckpt) else _build_model(cloudy_ch, sar_ch, device)
-            else:
-                # No dedicated checkpoint for ablated variants → random weights
-                # (In real usage, train each variant separately with --mode train)
-                print(f"  NOTE: No checkpoint for '{name}' variant. Using random weights.")
-                print(f"  Run with --mode train for trained ablation checkpoints.")
-                model_or_path = _build_model(cloudy_ch, sar_ch, device)
+            # eval mode: Zero-shot ablation using the FULL checkpoint for ALL variants.
+            ckpt = args.full_ckpt
+            if not os.path.isfile(ckpt):
+                print(f"  WARNING: full checkpoint '{ckpt}' not found.")
+            model_or_path = ckpt
 
         metrics = evaluate_variant(
             name, cloudy_ch, sar_ch,
@@ -464,22 +446,25 @@ def main():
 
         # Visual: get prediction for one reference patch
         if isinstance(model_or_path, (str, Path)) and os.path.isfile(model_or_path):
-            model_eval = _build_model(cloudy_ch, sar_ch, device)
+            model_eval = _build_model(4, 2, device)  # always full model
             ckpt = torch.load(model_or_path, map_location=device)
             model_eval.load_state_dict(ckpt.get("gen", ckpt))
-        elif isinstance(model_or_path, nn.Module):
-            model_eval = model_or_path
         else:
-            model_eval = _build_model(cloudy_ch, sar_ch, device)
+            model_eval = _build_model(4, 2, device)
 
         model_eval.eval()
         with torch.no_grad():
-            x_ref = _make_input(
-                {k: v[sample_within_idx:sample_within_idx+1]
-                 for k, v in ref_batch.items() if isinstance(v, torch.Tensor)},
-                cloudy_ch, sar_ch, device,
-            )
-            pred = _ablation_forward(model_eval, x_ref).squeeze(0).cpu().numpy()
+            # Build 6-channel input
+            c_ref = ref_batch["cloudy"][sample_within_idx:sample_within_idx+1].to(device)
+            s_ref = ref_batch["sar"][sample_within_idx:sample_within_idx+1].to(device)
+            
+            # Zero out missing modalities
+            if name == "no_cloudy":
+                c_ref = torch.zeros_like(c_ref)
+            elif name == "no_sar":
+                s_ref = torch.zeros_like(s_ref)
+                
+            pred = model_eval(c_ref, s_ref).squeeze(0).cpu().numpy()
 
         visual_data[name] = {"pred": pred, "clean": ref_clean, "metrics": metrics}
 

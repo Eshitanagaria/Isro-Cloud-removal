@@ -366,7 +366,7 @@ def main():
     log_path = ckpt_dir / "train_log.json"
     with open(log_path, "w") as f:
         json.dump(log, f, indent=2)
-    print(f"\n[train] Done. Log saved → {log_path}")
+    print(f"\n[train] Done. Log saved -> {log_path}")
     print(f"[train] Best val PSNR: {best_psnr:.2f} dB")
 
 
