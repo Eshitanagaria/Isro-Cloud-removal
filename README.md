@@ -16,7 +16,7 @@ This project develops a Generative AI framework for automated cloud removal usin
 
 **8.35% accuracy degradation caused purely by cloud contamination. Cloud removal recovers this.**
 
-## I/O Contract (frozen Day 1 — do not change without updating README)
+## I/O Contract 
 | Parameter | Value |
 |---|---|
 | Patch size | 256 × 256 pixels |
