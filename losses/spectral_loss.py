@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-# Band indices confirmed from Person A's data pipeline (README.md)
+
 # S2 order: [R, G, B, NIR] -> [0, 1, 2, 3]
 BAND_IDX = {'red': 0, 'green': 1, 'nir': 3}
 
