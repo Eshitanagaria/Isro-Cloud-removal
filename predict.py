@@ -1,7 +1,7 @@
 """
-predict.py  –  Person B
+predict.py  
 ──────────────────────────────────────────────────────────────────────────────
-LOCKED INFERENCE CONTRACT  (frozen, shared with Person A and C)
+LOCKED INFERENCE CONTRACT  
 
     predict(cloudy, sar, temporal=None) → reconstructed
 
@@ -20,7 +20,7 @@ reconstructed : np.ndarray  shape [4, 256, 256]  float32  in [0,1]
                 Clean optical reconstruction  (R, G, B, NIR)
 
 ──────────────────────────────────────────────────────────────────────────────
-Person C calls this function directly from pipeline.py / fallback.py.
+
 """
 
 from __future__ import annotations
