@@ -1,12 +1,12 @@
 """
-train.py  –  Person B
+
 Full GAN training loop.
 
 Usage (from project root):
     python gan/train.py --data_dir data/synthetic --epochs 50
 
 Checkpoints are saved to  checkpoints/  every N epochs.
-Person C's spectral loss is plugged in via --spectral_loss flag once available.
+
 """
 
 import argparse
@@ -29,8 +29,7 @@ from gan.discriminator import PatchGANDiscriminator
 from gan.losses        import LSGANLoss, GeneratorLoss
 from gan.dataset       import build_dataloaders
 
-# Optional: Person C's spectral loss  (imported lazily so training works
-#           even before /losses/ exists)
+
 def _try_import_spectral_loss():
     try:
         from losses.spectral_loss import SpectralConsistencyLoss
